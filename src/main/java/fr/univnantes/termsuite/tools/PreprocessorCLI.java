@@ -1,8 +1,20 @@
 package fr.univnantes.termsuite.tools;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Path;
+
+import org.apache.uima.UIMAException;
+import org.apache.uima.cas.admin.CASAdminException;
+import org.apache.uima.cas.impl.XmiCasDeserializer;
+import org.apache.uima.fit.factory.JCasFactory;
+import org.apache.uima.jcas.JCas;
+import org.xml.sax.SAXException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,10 +52,47 @@ public class PreprocessorCLI extends CommandLineClient { // NO_UCD (public entry
 				TermSuiteCliOption.PREPARED_TERMINO_JSON);
 	}
 
-
+	private String getXmiDocumentText(JCas jcas, InputStream is) throws IOException, SAXException {
+	    XmiCasDeserializer.deserialize(is, jcas.getCas(), true /* specifie qu'il faut ignorer les typesystems inconnus */);
+	    return jcas.getDocumentText();
+	}
+	
+	private void processSomeDirectory(File dir) throws UIMAException, IOException, SAXException, CASAdminException {
+	    JCas jcas = JCasFactory.createJCas(); /* creation d'un CAS, operation couteuse */
+	    for (File f : dir.listFiles()) {
+	    	if(f.getPath().toLowerCase().endsWith(".xmi")) {
+		        try (InputStream is = new FileInputStream(f)) {
+		            String text = getXmiDocumentText(jcas, is);
+		            
+		            // création d'un nouveau fichier .txt et ajout du XmiDocumentText
+		            File txtFile = new File(f.getPath().replace(".xmi", ".txt"));
+	            	OutputStream os = new FileOutputStream(txtFile);
+	            	
+	    			// if file doesn't exists, then create it
+	    			if (!txtFile.exists()) {
+	    				txtFile.createNewFile();
+	    			}
+	    			
+	    			byte[] textInBytes = text.getBytes(); // get the text content in bytes	    			
+	            	os.write(textInBytes);
+	            	os.flush();
+	            	os.close();
+	            	is.close();
+	            	//Files.deleteIfExists(f.toPath()); // remove original xmi file
+		        }
+	    	}
+	       jcas.reset(); /* reutilisation du meme CAS pour eviter d'en creer plusieurs */
+	    }
+	}
 	@Override
-	protected void run() throws IOException {
+	protected void run() throws IOException, UIMAException, CASAdminException, SAXException {
 		fr.univnantes.termsuite.api.Preprocessor preprocessor = TermSuite.preprocessor();
+		
+		// Conversion des fichiers XMI en TXT avec récupération du texte à partir d'un XMI
+		if(isSet(TermSuiteCliOption.FROM_TXT_CORPUS_PATH)) {
+			Path ascorpusPath = asDir(TermSuiteCliOption.FROM_TXT_CORPUS_PATH);
+			processSomeDirectory(ascorpusPath.toFile());
+		}
 		
 		if(isSet(TermSuiteCliOption.TAGGER))
 			preprocessor.setTagger(Tagger.forName(asString(TermSuiteCliOption.TAGGER)));
@@ -88,7 +137,9 @@ public class PreprocessorCLI extends CommandLineClient { // NO_UCD (public entry
 		} else 
 			// consume
 			LOGGER.debug("Consuming the stream with #count() as there is no single-file terminology export.");
-			preprocessor.asStream(txtCorpus).count();
+		
+		// Returns this preprocessor as a stream of prepared CASes.
+		preprocessor.asStream(txtCorpus).count();
 	}
 
 
